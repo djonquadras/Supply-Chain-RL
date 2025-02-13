@@ -1,0 +1,12 @@
+requests
+pandas
+numpy
+matplotlib
+plotly
+simpy
+scipy
+tensorflow
+gym
+stable-baselines3
+openpyxl
+ipykernel
