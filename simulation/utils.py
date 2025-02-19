@@ -1,7 +1,7 @@
 import requests
 
 # Função para calcular distância real usando OSRM API
-def calculate_osrm_distance(origin_lat, origin_lon, dest_lat, dest_lon):
+def distance(origin_lat, origin_lon, dest_lat, dest_lon):
     url = f"http://router.project-osrm.org/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}?overview=false"
     response = requests.get(url)
     data = response.json()

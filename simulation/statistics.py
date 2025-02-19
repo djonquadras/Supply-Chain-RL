@@ -16,13 +16,34 @@ def generate_statistics():
     
     #States
     statistics.update({'FruitStock': np.zeros(4, int) + 5000}) # Start with same stock for all
-    statistics.update({'ProductStock': [np.zeros(4, int)+5000,
-                                        np.zeros(4, int)+5000,
-                                        np.zeros(4, int)+5000,
-                                        np.zeros(4, int)+5000,
-                                        np.zeros(4, int)+5000]}) # Start with same stock for all
+    statistics.update({'ProductStock': [np.zeros(4, int)+8000,
+                                        np.zeros(4, int)+8000,
+                                        np.zeros(4, int)+8000,
+                                        np.zeros(4, int)+8000,
+                                        np.zeros(4, int)+8000]}) # Start with same stock for all
+    
+    
+    
+    statistics.update({'DeliveredWeek': [np.zeros(4, int),
+                                         np.zeros(4, int),
+                                         np.zeros(4, int),
+                                         np.zeros(4, int),
+                                         np.zeros(4, int)]})
+    
+    statistics.update({'FruitDelivered': np.zeros(4, int)})
+    
+    statistics.update({'PkgDelivered': 0})
+    
+    
+   
+    
+    statistics.update({'Packed': [np.zeros(4, int),
+                                  np.zeros(4, int),
+                                  np.zeros(4, int),
+                                  np.zeros(4, int),
+                                  np.zeros(4, int)]})
     statistics.update({'InProduction': np.zeros(4, int)}) # Start with same stock for all
-    statistics.update({'BootleStock': 5000})
+    statistics.update({'BootleStock': 15000})
     statistics.update({'Producing': np.zeros(4, int)})
     statistics.update({'HistoricProducing': []})
     
@@ -52,35 +73,28 @@ def generate_statistics():
                                    np.zeros(4, int)+800,
                                    np.zeros(4, int)+800,
                                    np.zeros(4, int)+800]})
-    statistics.update({"TotalLostSales": 0})
-    statistics.update({"Produced": 0})
+    statistics.update({'TotalLostSales': 0})
+    statistics.update({'Produced': 0})
     
-    statistics.update({"Demands": [[], [], [], [],[]]})
+    statistics.update({'Demands': [[], [], [], [],[]]})
 
     # Rewards
     
-    #Supply
-    statistics.update({'FruitSupplierEmission': 0})
-    statistics.update({'BottleSupplierEmission': 0})
-    
-    # Production
-    statistics.update({'LostProductionCost': 0})
-    
-    # Delivery
-    statistics.update({'DeliveryEmissions': 0})
-    statistics.update({'DeliveryCosts': 0})
-    
-    # Warehouses
+    # Emission
+    statistics.update({'Emissions': 0})
+        
+    # Cost
     statistics.update({'LostSales': 0})
     statistics.update({'StockCost': 0})
+    statistics.update({'emissionsCost': 0})
+    
     
     
     # Total
-    statistics.update({'TotalEmission': 0})
     statistics.update({'TotalCost': 0})
     
-    statistics.update({"DeltaEmission": 0})
-    statistics.update({"DeltaCost": 0})
+    statistics.update({'DeltaEmission': 0})
+    statistics.update({'DeltaCost': 0})
 
     
     return statistics

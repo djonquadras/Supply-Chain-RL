@@ -1,206 +1,135 @@
 import gymnasium as gym
-from gymnasium import spaces
+
 import numpy as np
 import pandas as pd
-from simulation.fruitSupplier import Supplier
-from simulation.factory import Factory
-from simulation.warehouse import Warehouse
-from simulation.parameters import generate_parameters
-from simulation.statistics import generate_statistics
-from simulation.utils import calculate_osrm_distance
+import simulation.initializeEnv as init
+import simpy
+
 
 convergence = []
 
 class SupplyChainEnv(gym.Env):
     def __init__(self):
         super(SupplyChainEnv, self).__init__()
-
-        self.action_space = spaces.MultiDiscrete([1000] * 25)
+        self.recent_costs = []
+        self.history_size = 500
         
-        self.observation_space = spaces.Box(low=0,
-                                            high=100000,
-                                            shape=(50,),
-                                            dtype=np.float32)
-
-        self.state = np.zeros(50)
-        self.parameters = generate_parameters()
-        self.statistics = generate_statistics()
+        ################################################
+        # Simulation
+        ################################################
         
-        self.time = 0  # To follow the weeks
-        self.future_events = []  # Next Events to simulate time
-        self.production = []  # Next Productions
+        # Simpy environment
+        self.env = init.create_env()
+        
+        # Parameters and Statistics
+        self.parameters = init.create_parameters()
+        self.statistics = init.create_statistics()
         
         # Create the Factory
-        self.factory = Factory(coords=(43.800984, 11.244919))
+        self.factory = init.create_factory(
+            self.env,
+            self.parameters,
+            self.statistics
+        )
 
         # Create the Fruit Supplier
-        self.fruit_supplier = Supplier(coords=(38.903486, 16.598676),
-                                       distance = calculate_osrm_distance(*self.factory.coords,
-                                                                          *(38.903486, 16.598676)),
-                                       lead_time_dist=(1, 2),
-                                       parameters = self.parameters,
-                                       statistics = self.statistics)
+        self.fruit_supplier = init.create_fruit_supplier(
+            self.env,
+            self.factory,
+            self.parameters,
+            self.statistics)
         
-        # Create the package supplier
-        self.package_supplier = Supplier(coords=(43.474687, 11.877804),
-                                         distance = calculate_osrm_distance(*self.factory.coords, *(43.474687, 11.877804)),
-                                         lead_time_dist=(1, 3),
-                                         parameters=self.parameters,
-                                         statistics=self.statistics)
+        # Create the Package Supplier
+        self.package_supplier = init.create_package_supplier(
+            self.env,
+            self.factory,
+            self.parameters,
+            self.statistics)
 
         # Create all the warehouses
-        self.warehouses = [
-            Warehouse(name="Warehouse_Rome",
-                      coords=(41.971159, 12.544795),
-                      distance = calculate_osrm_distance(*self.factory.coords,
-                                                         *(41.971159, 12.544795))),
-            Warehouse(name="Warehouse_Milan",
-                      coords=(45.428825, 9.078473),
-                      distance = calculate_osrm_distance(*self.factory.coords,
-                                                         *(45.428825, 9.078473))),
-            Warehouse(name="Warehouse_Naples",
-                      coords=(41.003024, 14.209611),
-                      distance = calculate_osrm_distance(*self.factory.coords,
-                                                         *(41.003024, 14.209611))),
-            Warehouse(name="Warehouse_Turin",
-                      coords=(45.070660, 7.680977),
-                      distance = calculate_osrm_distance(*self.factory.coords,
-                                                         *(45.070660, 7.680977))),
-            Warehouse(name="Warehouse_Bologna",
-                      coords=(44.486332, 11.340338),
-                      distance = calculate_osrm_distance(*self.factory.coords,
-                                                         *(44.486332, 11.340338)))
-        ]
+        self.warehouses = init.create_warehouses(self.factory)
         
+        ################################################
+        # Reinforcement Learning
+        ################################################
+        
+        # Reinforcement Learning Sets
+        self.action_space = init.create_action_space()
+        self.observation_space = init.create_observation_space()
+        self.state = init.create_state_space()
+        
+
+        # Local Variables
+        self.time = 0  # To follow the weeks
+        self.nextTime = 0        
 
     def step(self, action):
         self.time += 1
-        nextTime = self.time
+        self.nextTime = self.time
         if self.time > 52:
             self.time = 1
-            nextTime = 1
+            self.nextTime = 1
+            
+        self.statistics['DeliveredWeek'] = [np.zeros(4, int),
+                                            np.zeros(4, int),
+                                            np.zeros(4, int),
+                                            np.zeros(4, int),
+                                            np.zeros(4, int)]
+        
+        self.statistics['FruitDelivered'] = np.zeros(4, int)
+        self.statistics['PkgDelivered'] = 0
         
         # Clean all the parameters to start the evaluation
-        self.statistics["LostSales"] = 0
-        self.statistics["StockCost"] = 0
-        self.statistics["LostProductionCost"] = 0
-        self.statistics["DeliveryEmissions"] = 0
-        self.statistics["FruitSupplierEmission"] = 0
-        self.statistics["BottleSupplierEmission"] = 0
-
-        # Save the costs and emissions from the previous week
-        prev_emissions = self.statistics["TotalEmission"]
-        prev_costs = self.statistics["TotalCost"]
+        self.statistics['Emissions'] = 0
+        self.statistics['LostSales'] = 0
+        self.statistics['StockCost'] = 0
+        self.statistics['LostProductionCost'] = 0
+        self.statistics['DeliveryEmissions'] = 0
+        self.statistics['FruitSupplierEmission'] = 0
+        self.statistics['BottleSupplierEmission'] = 0
 
         # Collect the Orders for Suppliers
-        fruit_quantities = action[:4]*20
-        package_quantity = action[4]*30
+        self.statistics['FruitOrder'] = action[:4] * self.parameters['FruitLotSize']
+        self.statistics['PackageOrder'] = action[4] * self.parameters['PackageLotSize']
+        
         
         # Collect the Production for each warehouse
-        qnt_rome = action[5:9]
-        qnt_milan = action[9:13]
-        qnt_naples = action[13:17]
-        qnt_turin = action[17:21]
-        qnt_bologna = action[21:25]
+        qnt_rome = action[5:9] * self.parameters["ProductionBatchSize"]
+        qnt_milan = action[9:13] * self.parameters["ProductionBatchSize"]
+        qnt_naples = action[13:17] * self.parameters["ProductionBatchSize"]
+        qnt_turin = action[17:21] * self.parameters["ProductionBatchSize"]
+        qnt_bologna = action[21:25] * self.parameters["ProductionBatchSize"]
         
-        for i, _ in enumerate(self.statistics["Producing"]):
-            self.statistics["Producing"][i] += qnt_rome[i]
-            self.statistics["Producing"][i] += qnt_milan[i]
-            self.statistics["Producing"][i] += qnt_naples[i]
-            self.statistics["Producing"][i] += qnt_turin[i]
-            self.statistics["Producing"][i] += qnt_bologna[i]
+        self.statistics['ToProduce'][0] += qnt_rome
+        self.statistics['ToProduce'][1] += qnt_milan
+        self.statistics['ToProduce'][2] += qnt_naples
+        self.statistics['ToProduce'][3] += qnt_turin
+        self.statistics['ToProduce'][4] += qnt_bologna
         
-        self.statistics["HistoricProducing"].append(self.statistics["Producing"].copy())    
-        # Adiciona a produção futura
-        ProductionLT = self.time #+ np.random.randint(*(1, 3))
-        self.production.append((ProductionLT,
-                                'production',
-                                0,
-                                qnt_rome,
-                                qnt_milan,
-                                qnt_naples,
-                                qnt_turin,
-                                qnt_bologna))
+        for i, _ in enumerate(self.statistics['Producing']):
+            self.statistics['Producing'][i] += qnt_rome[i]
+            self.statistics['Producing'][i] += qnt_milan[i]
+            self.statistics['Producing'][i] += qnt_naples[i]
+            self.statistics['Producing'][i] += qnt_turin[i]
+            self.statistics['Producing'][i] += qnt_bologna[i]
+        
+        self.statistics['HistoricProducing'].append(self.statistics['Producing'].copy())    
 
         
-
-        # Simula o tempo de entrega dos fornecedores
-        FruitDeliveryLT = self.time #+ np.random.randint(*self.fruit_supplier.lead_time_dist)
-
-        for i, qty in enumerate(fruit_quantities):
-            e = self.fruit_supplier.step(qty)
-            self.future_events.append((FruitDeliveryLT,
-                                       'fruit',
-                                       i,
-                                       qty,
-                                       e))
-
-        BottleDeliveryLT = self.time # + np.random.randint(*self.package_supplier.lead_time_dist)
-        e_pck = self.package_supplier.step(package_quantity)
-        self.future_events.append((BottleDeliveryLT,
-                                   'package',
-                                   package_quantity,
-                                   e_pck))
-
-        # Processa eventos futuros e calcula custos de estoque
-        self.process_future_events(delivery = False)
-        self.process_production()
-        self.process_future_events(delivery = True)
+        # Run the simulation
+        self.env.run(until = (self.env.now + 7))
         self.GenerateDemands()
-        self.CalculateStockCost()
-        
-        
 
-        # Atualiza estados
-        self.state[0] = self.statistics["BootleStock"]
-        self.state[1:5] = self.statistics["FruitStock"]
-        self.state[5:25] = np.array(self.statistics["StockWH"]).flatten()
-        self.state[25] = nextTime
-        self.state[26:30] = self.statistics["Demands"][0][-1]
-        self.state[30:34] = self.statistics["Demands"][1][-1]
-        self.state[38:42] = self.statistics["Demands"][2][-1]
-        self.state[42:46] = self.statistics["Demands"][3][-1]
-        self.state[46:50] = self.statistics["Demands"][4][-1]
-        self.state = np.maximum(self.state, 0)
+        # Update States
+        self.updateState()
 
-        # Atualiza custos e emissões totais
-        total_emissions = (
-            self.statistics["DeliveryEmissions"]
-            + self.statistics["FruitSupplierEmission"]
-            + self.statistics["BottleSupplierEmission"]
-        )
-        emissionsCost = (total_emissions/1000000)*67.25
-        total_costs = (
-            self.statistics["LostSales"] * 1000
-            + self.statistics["StockCost"]
-            + self.statistics["LostProductionCost"]
-            + emissionsCost
-        )
-        
-
-        # Calcula variação dos custos e emissões
-        delta_emissions = 1
-        delta_costs = 1
-        if prev_emissions != 0:
-            delta_emissions = (total_emissions - prev_emissions)/prev_emissions
-        if prev_costs != 0:
-            delta_costs = (total_costs - prev_costs)/prev_costs
-
-        # Define o reward como a variação negativa (quanto menor a variação, melhor)
-        delta_emissions = total_emissions/self.statistics['Produced']
-        delta_costs = total_costs / self.statistics['Produced']
-        
-        reward = -(delta_costs)
-        
-        self.statistics["TotalEmission"] = emissionsCost
-        self.statistics["TotalCost"] = delta_costs
-        print(f"Reward = {reward}")
-        
+        # Calculate the Costs
+        self.calculateCost()
+             
+        reward = self.calculate_reward()#-(self.statistics['TotalCost'])        
 
         # Atualiza o dicionário de estatísticas
-        self.statistics["DeltaEmission"] = delta_emissions
-        self.statistics["DeltaCost"] = delta_costs
-        self.statistics["LastReward"] = reward
+        self.statistics['LastReward'] = reward
 
         terminated = False
         truncated = False
@@ -210,19 +139,57 @@ class SupplyChainEnv(gym.Env):
         return self.state, reward, terminated, truncated, {}
 
 
+    def calculate_reward(self):
+        raw_reward = -self.statistics["TotalCost"]
+
+        # Atualizar histórico
+        self.recent_costs.append(raw_reward)
+        if len(self.recent_costs) > self.history_size:
+            self.recent_costs.pop(0)  # Mantém só os últimos N valores
+
+        # Obter valores mínimo e máximo do histórico
+        min_cost = min(self.recent_costs)
+        max_cost = max(self.recent_costs)
+
+        # Normalizar usando Min-Max
+        if max_cost - min_cost > 0:
+            reward = (raw_reward - min_cost) / (max_cost - min_cost)  # Normaliza entre 0 e 1
+            reward = reward * 2 - 1  # Mapeia para o intervalo [-1, 1]
+        else:
+            reward = raw_reward  # Evita divisão por zero
+            
+        rawReward = -self.statistics["TotalCost"]
+
+        return np.sign(raw_reward) * np.log(1 + abs(raw_reward))
+
     
     def CalculateStockCost(self):
-        cost = 0
-        for i, stockCost in enumerate(self.parameters["StockCost"]):
-            cost += (self.statistics["FruitStock"][i]/100)*stockCost
         
-        cost += (self.statistics["BootleStock"]/100)*self.parameters["BootleStockCost"]
-            
-        for wh in self.statistics["StockWH"]:
-            cost += (np.sum(wh)*self.parameters["JuiceSotckCost"])
-            #print(f"Rodada {self.time} |  Sotck = {wh} | Cost =  {cost}")
-            
-        self.statistics["StockCost"] += cost
+        stockCost = 0
+        
+        # Fruit Stock
+        fruitStock =int(sum((self.statistics['FruitStock']
+                             /self.parameters['FruitLotSize'])))
+        
+        stockCost += (fruitStock
+                      *self.parameters['FruitStockCost'])
+
+        # Juice Stock
+        juiceStock = int(np.sum(self.statistics['StockWH'])) # Warehouses
+        juiceStock = juiceStock / self.parameters["ProductionBatchSize"]
+        
+        #juiceStock += int(np.sum(self.statistics['ProductStock'])) # Factory
+        
+        stockCost += juiceStock*self.parameters['JuiceSotckCost']
+        
+        # Bootle Stock
+        stockCost += ((self.statistics['BootleStock']
+                      *self.parameters['BootleStockCost'])
+                      /self.parameters['PackageLotSize'])
+        
+        
+        
+        self.statistics['StockCost'] = stockCost
     
     def GenerateDemands(self):
         
@@ -233,68 +200,76 @@ class SupplyChainEnv(gym.Env):
             pond1 = 1.2
             pond2 = 1.3
         
-        for i, DemWH in enumerate(self.parameters["demands"]):
+        for i, DemWH in enumerate(self.parameters['demands']):
             
             # Generate the Demands
-            DemWH2 = np.array(DemWH.copy())/4
-            DemWH2 = (DemWH2 * np.random.uniform(pond1, pond2, size=len(DemWH2))).astype(int)
-            self.statistics["Demands"][i].append(DemWH2)
+            DemWH2 = np.array(DemWH.copy())
+            DemWH2 = (DemWH2 * np.random.triangular(pond1, ((pond1+pond2)/2), pond2)).astype(int)
+            self.statistics['Demands'][i].append(DemWH2)
             
             # Sell the Products
-            self.statistics["StockWH"][i] -= DemWH2
-            
+            self.statistics['StockWH'][i] -= DemWH2
+
             # Sum the lost sales
-            self.statistics["LostSales"] -= np.sum(self.statistics["StockWH"][i][self.statistics["StockWH"][i] < 0])
+            self.statistics['LostSales'] -= np.sum(self.statistics['StockWH'][i][self.statistics['StockWH'][i] < 0])
 
             # Set Stock as Zero
-            self.statistics["StockWH"][i][self.statistics["StockWH"][i] < 0] = 0
-            
+            self.statistics['StockWH'][i][self.statistics['StockWH'][i] < 0] = 0
+    
+    def calculateCost(self):
+        self.CalculateStockCost()
+        totalCost = 0
+        emissionsCost = ((self.statistics['Emissions']
+                          /1000)
+                         *self.parameters['CO2Cost'])
         
-
-    def process_future_events(self, delivery):
-        for event in list(self.future_events):
-            
-            if event[0] <= self.time:
-                if event[1] == 'fruit':
-                    self.statistics["FruitStock"][event[2]] += event[3]
-                    self.statistics["FruitSupplierEmission"] += event[4]
-                    self.future_events.remove(event)
-                elif event[1] == 'package':
-                    self.statistics["BootleStock"] += event[2]
-                    self.statistics["BottleSupplierEmission"] += event[3]
-                    self.future_events.remove(event)
-                elif ((event[1] == 'delivery') and (delivery)):
-                    self.factory.deliver(event[3],
-                                            event[4],
-                                            self.parameters,
-                                            self.statistics,
-                                            event[2])
-                    self.future_events.remove(event)
+        lostSale = (self.statistics['LostSales']
+                     * self.parameters['LostSaleCost'])
+        
+        
+        totalCost += self.statistics['StockCost']
+        totalCost += emissionsCost
+        totalCost += lostSale
+        
+        
+        self.statistics['LostSales'] = lostSale
+        self.statistics['emissionsCost'] = emissionsCost
                 
-                
-    def process_production(self):
-        for event in list(self.production):
-            if event[0] <= self.time:
-                for i, warehouse in enumerate(self.warehouses):
-                    
-                    delivery = self.produce(event[3+i])
-                    self.statistics["InDelivery"][i] += delivery
-                    dist = warehouse.distance
-                    self.future_events.append((dist/self.parameters["speed"],
-                                                'delivery',
-                                                i,
-                                                delivery,
-                                                dist))                    
-                self.production.remove(event)
+        self.statistics['TotalCost'] = totalCost
+        
+        
+    def updateState(self):
+        self.state[0] = self.statistics['BootleStock']
+        self.state[1:5] = self.statistics['FruitStock']
+        self.state[5:25] = np.array(self.statistics['StockWH']).flatten()
+        self.state[25] = self.nextTime
+        self.state[26:30] = self.statistics['Demands'][0][-1]
+        self.state[30:34] = self.statistics['Demands'][1][-1]
+        self.state[38:42] = self.statistics['Demands'][2][-1]
+        self.state[42:46] = self.statistics['Demands'][3][-1]
+        self.state[46:50] = self.statistics['Demands'][4][-1]
+        self.state = np.maximum(self.state, 0)
     
 
     def reset(self, seed=None):
         self.state = np.zeros(50, dtype=np.float32)
-        self.future_events = []
         self.time = 0
-        self.statistics = generate_statistics()
-        pd.DataFrame(convergence).to_excel("Results/convergence.xlsx")
+        self.week = 0
+        self.nextTime = 0
+        
+        self.env = init.create_env()
+        self.parameters = init.create_parameters()
+        self.statistics = init.create_statistics()
+        self.factory = init.create_factory(self.env, self.parameters, self.statistics)
+        self.fruit_supplier = init.create_fruit_supplier(self.env, self.factory, self.parameters, self.statistics)
+        self.package_supplier = init.create_package_supplier(self.env, self.factory, self.parameters, self.statistics)
+        self.warehouses = init.create_warehouses(self.factory)
+        self.action_space = init.create_action_space()
+        self.observation_space = init.create_observation_space()
+        self.state = init.create_state_space()
+        pd.DataFrame(convergence).to_excel('Results/convergence.xlsx')
         return self.state, {}
 
     def render(self, mode='human'):
-        print(f"State: {self.state}")
+        pass
+        #print(f"State: {self.state}")

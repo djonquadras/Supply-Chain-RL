@@ -1,5 +1,6 @@
-from simulation.utils import calculate_osrm_distance
+from simulation.utils import distance
 from simulation.productionOrder import ProductionOrder
+from math import ceil
 
 import numpy as np
 
@@ -15,19 +16,22 @@ class Factory:
         self.parameters = parameters
         self.statistics = statistics
         self.env.process(self.Production())
+        self.env.process(self.Packing())
     
     # Function to simulate the release of production orders
     def Production(self):
+        
         while True:
-            for wh, ProdVector in enumerate(self.parameters["ToProduce"]):
+            for wh, ProdVector in enumerate(self.statistics["ToProduce"]):
                 for juiceType, quantity in enumerate(ProdVector):
                     recipe = self.parameters['recipe'][juiceType]
                     stockBootles = self.statistics["BootleStock"]
-                    max_by_fruit = quantity // recipe if recipe > 0 else 0
-                    max_by_bottle = quantity // stockBootles if stockBootles > 0 else 0 
+                    fruitStock = self.statistics["FruitStock"][juiceType]
+                    max_by_fruit = fruitStock // recipe
             
-                    max_possible = min(max_by_fruit, max_by_bottle, quantity)
+                    max_possible = min(max_by_fruit, stockBootles, quantity)
                     if max_possible > 0:
+                        self.statistics["ToProduce"][wh][juiceType] -= max_possible
                         ProductionOrder(
                             id = self.statistics['LastPOID'],
                             juiceType = juiceType,
@@ -39,33 +43,45 @@ class Factory:
                         self.statistics['LastPOID'] += 1
             yield self.env.timeout(1) # Run it daily
 
-    def step(self,
-             product_quantities,
-             warehouse_dist_list,
-             parameters):
+    def Packing(self):
+        pass
+        while True:
+            for warehouse, juices in enumerate(self.statistics['ProductStock']):
+                delivering = juices.copy()
+                self.statistics['ProductStock'][warehouse] = np.zeros(4, int)
+                yield self.env.process(self.Delivery(delivering, warehouse))
+            yield self.env.timeout(7)
         
-        emissions = 0
-        for i, qty in enumerate(product_quantities):
-            emissions += (warehouse_dist_list[i]
-                          * parameters["emission_factor"]) #* qty)
-            
-        return emissions
-    
-    def deliver(self,
-                product_quantities,
-                warehouse_dist,
-                parameters,
-                statistics,
-                i):
+    def Delivery(self, juices, warehouse):
+        capacity = self.parameters["juiceTruckCapacity"]
+        quantity = np.sum(juices)
+        usage = quantity/capacity
         
-        # No cost related to the delivery
-        # Consider the delivery a supplier responsability
+        consumption = 0
+        consumption += ceil(usage)*0.4 # Emission for Truck Usage
+        consumption += (usage)*0.6 # Emission for Capacity Usage
         
-        statistics["StockWH"][i] += product_quantities
-        statistics["InDelivery"][i] -= product_quantities
+        # Emission = Distance * Consumption * Emission Factor
         
-        statistics["DeliveryEmissions"] += (warehouse_dist
-                                            * parameters["emission_factor"] * np.sum(product_quantities))
+        distance = self.parameters["Distances"][warehouse]
+        emissions = (distance
+                     * consumption
+                     * self.parameters["emission_factor"])
+        # Go deliver
+        transportationHours = distance / 60
+        transportationDays = transportationHours / 24
+        
+        self.statistics["InDelivery"][warehouse] += juices
+        
+        yield self.env.timeout(transportationDays)
+        self.statistics["InDelivery"][warehouse] -= juices
+        
+        # Add the transportation emission
+        self.statistics['Emissions'] += emissions
+        self.statistics["StockWH"][warehouse] += juices
+        self.statistics["PackageDeliver"] = 0
+        self.statistics["DeliveredWeek"][warehouse] += juices
+        
         
         
         

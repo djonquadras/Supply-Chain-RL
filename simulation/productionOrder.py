@@ -30,10 +30,13 @@ class ProductionOrder:
         leadtime += 1 # Preparation
         leadtime += 1 # Quality Control 
         
+        #print(f"destination: {self.destination}, juiceType: {self.juiceType}")
         # Start Production
         self.statistics["InProduction"][self.juiceType] += self.quantity
-        self.statistics["ProductStock"][self.juiceType] -= self.quantity*self.recipe
-        self.statistics["BootleStock"] -= self.quantity
+        stockLevel = self.statistics["FruitStock"][self.juiceType] - self.quantity*self.recipe
+        self.statistics["FruitStock"][self.juiceType] = stockLevel if stockLevel > 0 else 0
+        bootleStock = self.statistics["BootleStock"] - self.quantity
+        self.statistics["BootleStock"] = bootleStock if bootleStock > 0 else 0
         
         yield self.env.timeout(leadtime)
         
