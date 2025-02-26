@@ -18,10 +18,11 @@ def create_parameters():
 def create_statistics():
     return generate_statistics()
 
-def create_factory(env, parameters, statistics):
+def create_factory(env, parameters, statistics, warehouses):
     return Factory(
         coords=(43.800984, 11.244919),
         env = env,
+        warehouses = warehouses,
         parameters = parameters,
         statistics = statistics)
 
@@ -43,19 +44,29 @@ def create_package_supplier(env, factory, parameters, statistics):
         statistics=statistics
     )
 
-def create_warehouses(factory):
-    return [
-        Warehouse(name="Warehouse_Rome", coords=(41.971159, 12.544795),
-                  distance=distance(*factory.coords, *(41.971159, 12.544795))),
-        Warehouse(name="Warehouse_Milan", coords=(45.428825, 9.078473),
-                  distance=distance(*factory.coords, *(45.428825, 9.078473))),
-        Warehouse(name="Warehouse_Naples", coords=(41.003024, 14.209611),
-                  distance=distance(*factory.coords, *(41.003024, 14.209611))),
-        Warehouse(name="Warehouse_Turin", coords=(45.070660, 7.680977),
-                  distance=distance(*factory.coords, *(45.070660, 7.680977))),
-        Warehouse(name="Warehouse_Bologna", coords=(44.486332, 11.340338),
-                  distance=distance(*factory.coords, *(44.486332, 11.340338)))
-    ]
+def create_warehouses(env, parameters, statistics):
+    warehouses = []
+    names = ["Rome",
+             "Milan",
+             "Naples",
+             "Turin",
+             "Bologna"]
+    
+    coords = [(41.971159, 12.544795),
+              (45.428825, 9.078473),
+              (41.003024, 14.209611),
+              (45.070660, 7.680977),
+              (44.486332, 11.340338)]
+    for id, name in enumerate(names):
+        warehouses.append(Warehouse(
+            name = name,
+            id = id,
+            env = env,
+            coords = coords[id],
+            parameters = parameters,
+            statistics = statistics
+        ))
+    return warehouses
 
 def create_action_space():
     return spaces.MultiDiscrete([100] * 25)
@@ -64,9 +75,9 @@ def create_observation_space():
     return spaces.Box(
         low=0,
         high=100000,
-        shape=(50,),
+        shape=(26,),
         dtype=np.float32
     )
 
 def create_state_space():
-    return np.zeros(50)
+    return np.zeros(26)

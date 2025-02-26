@@ -24,6 +24,8 @@ class JuiceSupplier:
                 statistics = self.statistics,
                 order = self.statistics["FruitOrder"].copy(),
                 distance = self.distance)
+            
             self.statistics["FruitOrder"] = np.zeros(4, int)
+            
             yield self.env.timeout(7)
             

@@ -14,21 +14,45 @@ def generate_statistics():
     # Genetic Algorithm (GA) Configuration Parameters
     statistics.update({'LastReward': None})
     
+    statistics.update({'ProductionLog': pd.DataFrame({
+        'id': [],
+        'Start Date': [],
+        'Finish Date': [],
+        'Quantity': [],
+        'Juice Type': [],
+        'Warehouse': []
+        })})
+    
+    statistics.update({'SupplierLog': pd.DataFrame({
+        'id': [],
+        'Type': [],
+        'Start Date': [],
+        'Finish Date': [],
+        'Order': [],
+        'Departure': [],
+        'Arrival': []
+        })})
+    
+    statistics.update({'DeliveryLog': pd.DataFrame({
+        'id': [],
+        'Destination': [],
+        'Departure': [],
+        'Arrival': [],
+        'Order': []
+        })})
+    
+
+    
     #States
-    statistics.update({'FruitStock': np.zeros(4, int) + 5000}) # Start with same stock for all
-    statistics.update({'ProductStock': [np.zeros(4, int)+8000,
-                                        np.zeros(4, int)+8000,
-                                        np.zeros(4, int)+8000,
-                                        np.zeros(4, int)+8000,
-                                        np.zeros(4, int)+8000]}) # Start with same stock for all
+    statistics.update({'FruitStock': np.zeros(4, int) + 500}) # Start with same stock for all
+    statistics.update({'LastFruitStock': np.zeros(4, int) + 500}) # Start with same stock for all
+    
+    statistics.update({'ProductStock': np.full((5, 4), 80, dtype=int)}) # Start with same stock for all
     
     
+    statistics.update({'OldStockLevels': np.zeros(20, int)})
     
-    statistics.update({'DeliveredWeek': [np.zeros(4, int),
-                                         np.zeros(4, int),
-                                         np.zeros(4, int),
-                                         np.zeros(4, int),
-                                         np.zeros(4, int)]})
+    statistics.update({'DeliveredWeek': np.full((5, 4), 0, dtype=int)})
     
     statistics.update({'FruitDelivered': np.zeros(4, int)})
     
@@ -37,44 +61,26 @@ def generate_statistics():
     
    
     
-    statistics.update({'Packed': [np.zeros(4, int),
-                                  np.zeros(4, int),
-                                  np.zeros(4, int),
-                                  np.zeros(4, int),
-                                  np.zeros(4, int)]})
+    statistics.update({'Packed': np.full((5, 4), 0, dtype=int)})
+    
     statistics.update({'InProduction': np.zeros(4, int)}) # Start with same stock for all
-    statistics.update({'BootleStock': 15000})
-    statistics.update({'Producing': np.zeros(4, int)})
+    statistics.update({'BootleStock': 50000})
+    statistics.update({'LastBootleStock': 50000})
     statistics.update({'HistoricProducing': []})
     
     statistics.update({'FruitOrder': np.zeros(4, int)})
-    statistics.update({'FruitProducing': np.zeros(4, int)})
-    statistics.update({'FruitDeliver': np.zeros(4, int)})
-    
     statistics.update({'PackageOrder': 0})
+    
     statistics.update({'PackageProducing': 0})
     statistics.update({'PackageDeliver': 0})
     
-    statistics.update({'LastPOID': 99000})
     
-    statistics.update({'InDelivery': [np.zeros(4, int),
-                                      np.zeros(4, int),
-                                      np.zeros(4, int),
-                                      np.zeros(4, int),
-                                      np.zeros(4, int)]})
-    statistics.update({'ToProduce': [np.zeros(4, int),
-                                     np.zeros(4, int),
-                                     np.zeros(4, int),
-                                     np.zeros(4, int),
-                                     np.zeros(4, int)]})
+    statistics.update({'InDelivery': np.full((5, 4), 0, dtype=int)})
+    statistics.update({'ToProduce': np.full((5, 4), 0, dtype=int)})
     
-    statistics.update({'StockWH': [np.zeros(4, int)+800,
-                                   np.zeros(4, int)+800,
-                                   np.zeros(4, int)+800,
-                                   np.zeros(4, int)+800,
-                                   np.zeros(4, int)+800]})
+    statistics.update({'StockWH': np.full((5, 4), 80, dtype=int)})
     statistics.update({'TotalLostSales': 0})
-    statistics.update({'Produced': 0})
+#    statistics.update({'Produced': 0})
     
     statistics.update({'Demands': [[], [], [], [],[]]})
 

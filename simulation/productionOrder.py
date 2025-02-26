@@ -1,14 +1,18 @@
 import numpy as np
+import pandas as pd
+
 class ProductionOrder:
+    _id_counter = 10900000000
+    
     def __init__(self,
-                 id,
                  juiceType,
                  parameters,
                  statistics,
                  quantity,
                  destination,
                  env):
-        self.id = id
+        self.id = ProductionOrder._id_counter
+        ProductionOrder._id_counter += 1
         self.parameters = parameters
         self.statistics = statistics
         self.env = env
@@ -17,9 +21,14 @@ class ProductionOrder:
         self.destination = destination
         self.recipe = parameters['recipe'][juiceType]
         self.env.process(self.produce())
+        self.startTime = 0
+        self.finishTime = 0
+        
     
     # Simulate the production
     def produce(self):
+        self.startTime = self.env.now
+        self.destination.StartedProduction[self.juiceType] += self.quantity
         leadtime = 0
         leadtime += 1 # Washing
         leadtime += np.random.triangular(1, 1.5, 2) # Extraction
@@ -42,4 +51,17 @@ class ProductionOrder:
         
         # Finish Production
         self.statistics["InProduction"][self.juiceType] -= self.quantity
-        self.statistics["ProductStock"][self.destination][self.juiceType] += self.quantity
+        self.statistics["ProductStock"][self.destination.id][self.juiceType] += self.quantity
+        self.destination.FinishedProduction[self.juiceType] += self.quantity
+        
+        self.finishTime = self.env.now
+        
+        df = pd.DataFrame({
+        'id': [self.id],
+        'Start Date': [self.startTime],
+        'Finish Date': [self.finishTime],
+        'Quantity': [self.quantity],
+        'Juice Type': [self.juiceType],
+        'Warehouse': [self.destination.name]})
+        self.statistics['ProductionLog'] = pd.concat([self.statistics['ProductionLog'], df], ignore_index=True)
+        
