@@ -2,49 +2,23 @@ import simpy
 import numpy as np
 from gymnasium import spaces
 from simulation.factory import Factory
-from simulation.fruitSupplier import JuiceSupplier
-from simulation.packageSupplier import PackageSupplier
 from simulation.parameters import generate_parameters
 from simulation.statistics import generate_statistics
 from simulation.warehouse import Warehouse
 from simulation.utils import distance
 
-def create_env():
-    return simpy.Environment()
 
-def create_parameters():
+def createParameters():
     return generate_parameters()
 
-def create_statistics():
+def createStatistics():
     return generate_statistics()
 
-def create_factory(env, parameters, statistics, warehouses):
-    return Factory(
-        coords=(43.800984, 11.244919),
-        env = env,
-        warehouses = warehouses,
-        parameters = parameters,
-        statistics = statistics)
+def createEnv():
+    return simpy.Environment()
 
-def create_fruit_supplier(env, factory, parameters, statistics):
-    return JuiceSupplier(
-        env=env,
-        coords=(38.903486, 16.598676),
-        distance=distance(*factory.coords, *(38.903486, 16.598676)),
-        parameters=parameters,
-        statistics=statistics
-    )
 
-def create_package_supplier(env, factory, parameters, statistics):
-    return PackageSupplier(
-        env=env,
-        coords=(43.474687, 11.877804),
-        distance=distance(*factory.coords, *(43.474687, 11.877804)),
-        parameters=parameters,
-        statistics=statistics
-    )
-
-def create_warehouses(env, parameters, statistics):
+def createWarehouses(env, parameters, statistics):
     warehouses = []
     names = ["Rome",
              "Milan",
@@ -68,16 +42,43 @@ def create_warehouses(env, parameters, statistics):
         ))
     return warehouses
 
-def create_action_space():
-    return spaces.MultiDiscrete([100] * 25)
+def createFactory(env, parameters, statistics, warehouses):
+    factory =  Factory(
+        coords=(43.800984, 11.244919),
+        env = env,
+        warehouses = warehouses,
+        parameters = parameters,
+        statistics = statistics)
+    
+    for wh in warehouses:
+        wh.factory = factory
+    
+    return factory
 
-def create_observation_space():
+
+
+def actionSpace(parameters):
+    # Definir limites dos inteiros
+    max_warehouses = 20  # 20 valores
+    max_raw_material = 5  # 5 valores
+    max_juice_produce = 4  # 4 valores
+
+    # Número total de ações (inteiros + floats)
+    action_dim = max_warehouses + max_raw_material + max_juice_produce + 4 + 5 + 20
+    
+    # Criar um espaço discreto de 0 a 100 para cada dimensão
+    return (spaces.MultiDiscrete([101] * action_dim))
+
+
+
+
+def observationSpace():
     return spaces.Box(
         low=0,
         high=100000,
-        shape=(26,),
+        shape=(30,),
         dtype=np.float32
     )
 
-def create_state_space():
-    return np.zeros(26)
+def stateSpace():
+    return np.zeros(30)

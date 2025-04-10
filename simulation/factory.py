@@ -1,6 +1,6 @@
 from simulation.utils import distance
 from simulation.productionOrder import ProductionOrder
-from simulation.deliveryOrder import DeliveryOrder
+from simulation.RawMaterialOrder import RawMaterialOrder
 from math import ceil
 
 import numpy as np
@@ -18,42 +18,75 @@ class Factory:
         self.parameters = parameters
         self.statistics = statistics
         self.warehouses = warehouses
-        self.env.process(self.Production())
-        self.env.process(self.Packing())
+        self.OrderedFruit = np.array([False, False, False, False, False])
+        self.Producing =  np.array([False, False, False, False])
+        
+        # Juice Parameters
+        self.inventoryJuice = np.array([500, 200, 200, 200], dtype=float)
+        self.ProdPointJuice = np.full(4, 0.9, dtype=float)
+        self.maxStockJuiceFac = np.array([600, 300, 300, 300], dtype=float)
+        self.ProdQnt = self.maxStockJuiceFac.copy()*0.4
+        self.stockUsageJuice = self.inventoryJuice/self.maxStockJuiceFac
+        self.produced = np.zeros(4, dtype=float)
+        self.demanded = np.zeros(4, dtype=float)
+        self.initialInventory = np.zeros(4, dtype=float)
+        
+        # RM Parameters
+        self.StockRM = np.array([200, 200, 200, 200, 200], dtype=float)
+        self.OrderPointRM = np.full(5, 0.9, dtype=float)
+        self.maxStockRM = np.full(5, 500, dtype=int)
+        self.OrderQntRM = self.maxStockRM.copy()*0.4
+        self.stockUsageRM = self.StockRM/self.maxStockRM
+        
+        self.arrived = np.zeros(5, dtype=float)
+        
+        self.checkRM = self.env.process(self.updateRawMaterial())
+        self.checkStocks = self.env.process(self.updateStocks())
     
-    # Function to simulate the release of production orders
-    def Production(self):
+    
+    def updateRawMaterial(self):
+        while True:
+            self.stockUsageRM = self.StockRM/self.maxStockRM
+            
+            for fruitID, usg in enumerate(self.stockUsageRM):
+                if (usg <= self.OrderPointRM[fruitID]):
+                    if not self.OrderedFruit[fruitID]:
+                        fruitOrder = True if fruitID == 5 else False
+                        self.OrderedFruit[fruitID] = True
+                        
+                        RawMaterialOrder(
+                            env = self.env,
+                            parameters = self.parameters,
+                            statistics = self.statistics,
+                            order = self.OrderQntRM[fruitID],
+                            fruitOrder = fruitOrder,
+                            factory = self,
+                            fruitID = fruitID)
+            
+            yield self.env.timeout(1)
+            
+                
+    
+    def updateStocks(self):
         
         while True:
-            for wh, ProdVector in enumerate(self.statistics["ToProduce"]):
-                for juiceType, quantity in enumerate(ProdVector):
-                    recipe = self.parameters['recipe'][juiceType]
-                    stockBootles = self.statistics["BootleStock"]
-                    fruitStock = self.statistics["FruitStock"][juiceType]
-                    max_by_fruit = fruitStock // recipe
             
-                    max_possible = min(max_by_fruit, stockBootles, quantity)
-                    if max_possible > 0:
-                        #print(f"Produzindo {max_possible} do tipo {juiceType} para {self.warehouses[wh].name}")
-                        self.statistics["ToProduce"][wh][juiceType] -= max_possible
+            self.stockUsageJuice = self.inventoryJuice/self.maxStockJuiceFac
+            
+            for juiceType, usg in enumerate(self.stockUsageJuice):
+                if usg <= self.ProdPointJuice[juiceType]:
+                    if not self.Producing[juiceType]:
+                        
+                        self.Producing[juiceType] = True
+                        
                         ProductionOrder(
                             juiceType = juiceType,
                             parameters = self.parameters,
                             statistics = self.statistics,
-                            quantity = max_possible,
-                            destination = self.warehouses[wh],
-                            env = self.env)
-            yield self.env.timeout(1) # Run it daily
+                            quantity = self.ProdQnt[juiceType],
+                            env = self.env,
+                            factory = self)
+            
+            yield self.env.timeout(1)
 
-    def Packing(self):
-        while True:
-            for wh, juices in enumerate(self.statistics['ProductStock']):
-                DeliveryOrder(
-                    env = self.env,
-                    juices = juices.copy(),
-                    parameters = self.parameters,
-                    statistics = self.statistics,
-                    warehouse = self.warehouses[wh]
-                )
-                self.statistics['ProductStock'][wh] = np.zeros(4, int)                
-            yield self.env.timeout(7)
+               

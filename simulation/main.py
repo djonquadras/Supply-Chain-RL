@@ -3,15 +3,21 @@ import gymnasium as gym
 import numpy as np
 import pandas as pd
 import simulation.initializeEnv as init
+import simulation.utils as utils
+from simulation.ReplanishmentOrder import ReplenishmentOrder
+from simulation.RawMaterialOrder import RawMaterialOrder
+from simulation.productionOrder import ProductionOrder
 import simpy
-
+from simulation.utils import plot_convergence_training
 
 convergence = []
+StockCost = []
+EmissionCost = []
+LostSaleCost = []
 
 class SupplyChainEnv(gym.Env):
     def __init__(self):
         super(SupplyChainEnv, self).__init__()
-        self.recent_costs = []
         self.history_size = 500
         
         ################################################
@@ -19,288 +25,272 @@ class SupplyChainEnv(gym.Env):
         ################################################
         
         # Simpy environment
-        self.env = init.create_env()
+        self.env = init.createEnv()
         
         # Parameters and Statistics
-        self.parameters = init.create_parameters()
-        self.statistics = init.create_statistics()
+        self.parameters = init.createParameters()
+        self.statistics = init.createStatistics()
         
         # Create all the warehouses
-        self.warehouses = init.create_warehouses(
+        self.warehouses = init.createWarehouses(
             env = self.env,
             parameters = self.parameters,
             statistics = self.statistics
             )
         
         # Create the Factory
-        self.factory = init.create_factory(
+        self.factory = init.createFactory(
             env = self.env,
             parameters = self.parameters,
             statistics = self.statistics,
             warehouses = self.warehouses
         )
 
-        # Create the Fruit Supplier
-        self.fruit_supplier = init.create_fruit_supplier(
-            self.env,
-            self.factory,
-            self.parameters,
-            self.statistics)
-        
-        # Create the Package Supplier
-        self.package_supplier = init.create_package_supplier(
-            self.env,
-            self.factory,
-            self.parameters,
-            self.statistics
-            )
-
-
-        
         ################################################
         # Reinforcement Learning
         ################################################
         
         # Reinforcement Learning Sets
-        self.action_space = init.create_action_space()
-        self.observation_space = init.create_observation_space()
-        self.state = init.create_state_space()
+        self.action_space = init.actionSpace(self.parameters)
+        self.observation_space = init.observationSpace()
+        self.state = init.stateSpace()
         
 
         # Local Variables
-        self.nextTime = 0
+        self.highDemand = 0
+    
+    def setActions(self, action):
+            # Separar os segmentos do vetor de ação
+            idx = 0
+            #action = np.maximum(action, 20)
+            action = np.array(action) / 100
+        
+            # Extraindo e convertendo os valores inteiros
+            num_juice = len(self.factory.maxStockJuiceFac)
+            
+            c = self.factory.maxStockJuiceFac.copy()*(((action[idx:idx+num_juice])).astype(float))
+
+            self.factory.ProdQnt[:] = c
+            idx += num_juice
+
+            num_rm = len(self.factory.maxStockRM)
+            
+            c = self.factory.maxStockRM*(((action[idx:idx+num_rm])).astype(float))
+            
+            self.factory.OrderQntRM[:] = c
+            idx += num_rm
+            
+            num_wh = len(self.warehouses)*self.warehouses[0].maxStock.size
+
+            for i, warehouse in enumerate(self.warehouses):
+                c = (warehouse.maxStock * action[idx + i * 4:idx + (i + 1) * 4].astype(float))
+                warehouse.OrderQntWH = c
+
+            idx += num_wh
+
+            # Extraindo os valores contínuos (float)
+            num_factories = 4
+            self.factory.ProdPointJuice[:] = action[idx:idx+num_factories]
+            idx += num_factories
+
+            num_rm_points = 5
+            self.factory.OrderPointRM[:] = action[idx:idx+num_rm_points]
+            idx += num_rm_points
+
+            for i, warehouse in enumerate(self.warehouses):
+                warehouse.ReorderPoint = action[idx + i * 4: idx + (i + 1) * 4]
+            
+    
+    def getStockLevels(self):
+        stockLevels= np.array([])
+        for wh in self.warehouses:
+            stockLevels = np.concatenate([stockLevels, np.array(wh.stockUsage).copy()])
+        
+        return stockLevels
+        
 
     def step(self, action):
-        self.parameters['Time'] += 1
-        self.nextTime = self.parameters['Time']
-        if self.parameters['Time'] > 52:
-            self.parameters['Time'] = 1
-            self.nextTime = 1
+        
+        for wh in self.warehouses:
+            wh.initialStock = wh.inventory.copy()
+        self.factory.initialInventory = self.factory.inventoryJuice.copy()
+
+        self.parameters['Time'] = 1 if self.parameters['Time'] > 12 else self.parameters['Time'] + 1
+        self.highDemand = 1 if 7 <= self.parameters['Time'] <= 9 else 0
+        self.parameters['highDemand'] = True if 7 <= self.parameters['Time'] <= 9 else False
+        
+        
+        #self.parameters['Time'] = 1 if self.parameters['Time'] > 22 else self.parameters['Time'] + 1
+        #self.highDemand = 1 if 28 < self.parameters['Time'] < 44 else 0
+        #self.parameters['highDemand'] = True if 28 < self.parameters['Time'] < 44 else False
+        
+        
         
         self.clearParameters()
         
-        # Collect the Orders for Suppliers
-        self.statistics['FruitOrder'] = action[:4] * self.parameters['FruitLotSize']
-        self.statistics['PackageOrder'] = action[4] * self.parameters['PackageLotSize']
-        
-        
-        # Collect the Production for each warehouse
-        for i in range(5):
-            self.statistics['ToProduce'][i] += action[((i*4)+5):((i*4)+9)]
+        self.setActions(action)
         
         # Run the simulation
-        #self.env.run(until = (self.env.now + 7))
+        self.env.run(until = (self.env.now + 30))
         
-        while not self.reorderCondition():
-            self.env.step()  # Avança apenas uma unidade de tempo
-
+        # Calculate the Costs
+        self.calculateCost()
+        
         # Update States
         self.updateState()
 
-        # Calculate the Costs
-        self.calculateCost()
-             
         reward = self.calculate_reward()
 
-        # Atualiza o dicionário de estatísticas
-        self.statistics['LastReward'] = reward
 
-        terminated = False
-        truncated = False
-        
         convergence.append(reward)
+        StockCost.append(self.statistics['StockCost'])
+        EmissionCost.append(self.statistics['emissionsCost'])
+        LostSaleCost.append(self.statistics['LostSalesCost'])
         
-        return self.state, reward, terminated, truncated, {}
+        return self.state, reward, False, False, {}
 
-    def reorderCondition(self):
-        condition = False
-        
-        for index, level in enumerate(self.statistics['stockLevel']):
-            if level <= self.parameters['ReorderPoint']:
-                condition = True
-                self.parameters["ReorderIndex"] = index
-                break
 
-        return condition
-    def clearParameters(self):
-        for wh in self.warehouses:
-            wh.StartedProduction = np.zeros(4, dtype=int)
-            wh.FinishedProduction = np.zeros(4, dtype=int)
-            
-        self.statistics['DeliveredWeek'] = np.full((5, 4), 0, dtype=int)
-        
-        self.statistics['FruitDelivered'] = np.zeros(4, int)
-        self.statistics['PkgDelivered'] = 0
-        
+
+       
+    def clearParameters(self):    
         # Clean all the parameters to start the evaluation
         self.statistics['Emissions'] = 0
         self.statistics['LostSales'] = 0
         self.statistics['StockCost'] = 0
-        self.statistics['LostProductionCost'] = 0
-        self.statistics['DeliveryEmissions'] = 0
-        self.statistics['FruitSupplierEmission'] = 0
-        self.statistics['BottleSupplierEmission'] = 0
-
+        self.statistics['emissionsCost'] = 0
+        self.statistics['LostSalesCost'] = 0
+        self.factory.produced = np.zeros(4, dtype=float)
+        self.factory.arrived = np.zeros(5, dtype=float)
+        self.factory.demanded = np.zeros(4, dtype=float)
+        
+        for wh in self.warehouses:
+            wh.lastDemands = np.zeros(4, dtype=np.float64)
+            wh.lostSales = 0
+            wh.delivered = np.zeros(4, dtype=float)
         
     def calculate_reward(self):
         raw_reward = -self.statistics["TotalCost"]
 
-        return np.sign(raw_reward) * np.log(1 + abs(raw_reward))
+        return  raw_reward # np.sign(raw_reward) * np.log(1 + abs(raw_reward))
     
     def calculateLostSales(self):
-        lostSale = 0
-        for wh in self.warehouses:
-            lostSale += wh.lostSales
-            wh.lostSales = 0
-        
-        self.statistics['LostSales'] = lostSale
-        
-        return lostSale
-        
+      
+        for warehouse in self.warehouses:
+            self.statistics['LostSales'] += warehouse.lostSales
     
-    def CalculateStockCost(self):
+    def calcStockCost(self):
         
         self.statistics['StockCost'] = 0
         
         # Fruit Stock
-        self.statistics['StockCost'] += (
-            self.statistics['FruitStock']
-            *self.parameters['FruitStockCost'])
+        self.statistics['StockCost'] += np.sum(
+            self.factory.StockRM
+            *self.parameters['RMStockCost'])
 
         # Warehouse Stock
         self.statistics['StockCost'] += (
             np.sum(self.getWarehouseStocks())
             * self.parameters['JuiceStockCost'])
         
-        # Bootle Stock
+        # Factory Juice Stock
         self.statistics['StockCost'] += (
-            self.statistics['BootleStock']
-            *self.parameters['BootleStockCost'])
-        
+            np.sum(self.factory.inventoryJuice)
+            * self.parameters['JuiceStockCost'])
 
+    def calcEmissionCost(self):
+        self.statistics['emissionsCost'] = 0
+        
+        self.statistics['emissionsCost'] = (
+            (self.statistics['Emissions']/1000)
+            *self.parameters['CO2Cost'])
+        
+        
+    def calcLostSalesCost(self):
+        
+        self.calculateLostSales()
+        self.statistics['LostSalesCost'] = 0
+        
+        self.statistics['LostSalesCost'] += (
+            self.statistics['LostSales']
+            * self.parameters['LostSaleCost'])
+        
     
     def calculateCost(self):
-        self.CalculateStockCost()
-        totalCost = 0
-        emissionsCost = ((self.statistics['Emissions']
-                          /1000)
-                         *self.parameters['CO2Cost'])
         
-        lostSale = (self.calculateLostSales()
-                    * self.parameters['LostSaleCost'])
+        self.calcStockCost()
+        self.calcEmissionCost()
+        self.calcLostSalesCost()
         
-        
-        totalCost += self.statistics['StockCost']
-        totalCost += emissionsCost
-        totalCost += lostSale
-        
-        
-        self.statistics['LostSales'] = lostSale
-        self.statistics['emissionsCost'] = emissionsCost
-                
-        self.statistics['TotalCost'] = totalCost
+       
+        self.statistics['TotalCost'] = (
+            self.statistics['StockCost']
+             + self.statistics['emissionsCost']
+             + self.statistics['LostSalesCost']) 
         
         
     def updateState(self):
-        
-        self.state[0] =  self.variationNumber(self.statistics['BootleStock'],
-                                              self.statistics['LastBootleStock'])
-        
-        self.statistics['LastBootleStock'] = self.statistics['BootleStock'].copy()
-        
-        self.state[1:5] = self.variation(self.statistics['FruitStock'],
-                                         self.statistics['LastFruitStock'])
-        
-        self.statistics['LastFruitStock'] = self.statistics['FruitStock'].copy() 
-        
-        self.state[5:25] = self.getVariationWHStocks()
-        self.state[25] = self.nextTime
-        #self.state[26:30] = self.warehouses[0].lastDemands
-        #self.state[30:34] = self.warehouses[1].lastDemands
-        #self.state[34:38] = self.warehouses[2].lastDemands
-        #self.state[38:42] = self.warehouses[3].lastDemands
-        #self.state[42:46] = self.warehouses[4].lastDemands
-        self.state = np.maximum(self.state, 0)
-        
-        for wh in self.warehouses:
-            wh.lastDemands = np.zeros(4, dtype=int)        
+        self.state[0:5] = self.factory.stockUsageRM        
+        self.state[5:25] = self.getStockLevels()
+        self.state[25:29] = self.factory.stockUsageJuice
+        self.state[29] = self.highDemand        
     
-    def variationNumber(self, a, b):
-        if ((a != 0) and (b != 0)):
-            return a / b -1
-        elif (b > 0):
-            return 1
-        else:
-            return 0
-
-    
-    def variation(self, a, b):
-        return np.where(
-            b == 0, 
-            np.where(a == 0, 0, 1),
-            (a / b ) -1
-)
         
     def getWarehouseStocks(self):
-        oldStocks = self.statistics['OldStockLevels']
         stock = np.array([])
         for warehouse in self.warehouses:
-            stock = np.concat([stock, warehouse.inventory])
-        
-        
-        
+            stock = np.concatenate([stock,
+                                    warehouse.inventory.copy()])
         return stock
     
     def getVariationWHStocks(self):
         oldStocks = self.statistics['OldStockLevels']
-        stock = np.array([])
-        for warehouse in self.warehouses:
-            stock = np.concat([stock, warehouse.inventory])
-        
-        variation = self.variation(stock, oldStocks)
+        stock = self.getWarehouseStocks()
+                
+        variation = utils.variation(stock, oldStocks)
         self.statistics['OldStockLevels'] = stock.copy()
         
         return variation
     
 
     def reset(self, seed=None):
+        
+        ReplenishmentOrder.correctID()
+        ProductionOrder.correctID()
+        RawMaterialOrder.correctID()
+        convergenceDF = pd.DataFrame({
+            'Convergence': convergence,
+            'StockCost': StockCost,
+            'EmissionCost': EmissionCost,
+            'LostSaleCost': LostSaleCost})
+        
+        if self.parameters['PlotChart']:
+            plot_convergence_training(convergenceDF,filename="Results/convergence.png")
+            convergenceDF.to_excel('Results/convergence.xlsx')
+        
         self.state = np.zeros(26, dtype=np.float32)
         self.week = 0
-        self.nextTime = 0
         
-        self.env = init.create_env()
-        self.parameters = init.create_parameters()
-        self.statistics = init.create_statistics()
-        self.warehouses = init.create_warehouses(
+        self.env = init.createEnv()
+        self.parameters = init.createParameters()
+        self.statistics = init.createStatistics()
+        self.warehouses = init.createWarehouses(
             env = self.env,
             parameters = self.parameters,
             statistics = self.statistics)
         
-        self.factory = init.create_factory(
+        self.factory = init.createFactory(
             env = self.env,
             parameters = self.parameters,
             statistics = self.statistics,
             warehouses = self.warehouses
             )
         
-        self.fruit_supplier = init.create_fruit_supplier(
-            self.env,
-            self.factory,
-            self.parameters,
-            self.statistics
-            )
-        
-        self.package_supplier = init.create_package_supplier(
-            self.env,
-            self.factory,
-            self.parameters,
-            self.statistics
-            )
 
-        self.action_space = init.create_action_space()
-        self.observation_space = init.create_observation_space()
-        self.state = init.create_state_space()
-        pd.DataFrame(convergence).to_excel('Results/convergence.xlsx')
+        self.action_space = init.actionSpace(self.parameters)
+        self.observation_space = init.observationSpace()
+        self.state = init.stateSpace()
+        
+        
         return self.state, {}
 
     def render(self, mode='human'):
